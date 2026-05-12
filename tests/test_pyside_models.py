@@ -2,13 +2,17 @@ import unittest
 
 try:
     from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
     from pyside_app.models.file_explorer import FileExplorerModel
     from pyside_app.models.duplicate_tables import DuplicateFilesModel, DuplicateGroupsModel
+    from pyside_app.widgets.file_preview import FilePreviewWidget
 except ModuleNotFoundError:
     Qt = None
+    QApplication = None
     DuplicateFilesModel = None
     DuplicateGroupsModel = None
     FileExplorerModel = None
+    FilePreviewWidget = None
 
 
 @unittest.skipIf(DuplicateGroupsModel is None, "PySide6 is not installed")
@@ -54,6 +58,34 @@ class PySideModelTests(unittest.TestCase):
         self.assertEqual(model.data(model.index(0, 2), Qt.DisplayRole), "1.00 KB")
         self.assertEqual(model.data(model.index(0, 4), Qt.DisplayRole), "Keep")
         self.assertEqual(model.data(model.index(0, 5), Qt.DisplayRole), "same as previous")
+
+    def test_file_explorer_model_returns_source_rows(self):
+        row = {"nombre": "b.flac", "ruta": r"C:\music\b.flac"}
+        model = FileExplorerModel()
+        model.set_files([row])
+
+        self.assertEqual(model.file_rows_at([0, 3]), [row])
+
+    def test_file_preview_shows_selected_file_details(self):
+        app = QApplication.instance() or QApplication([])
+        preview = FilePreviewWidget()
+
+        preview.set_file({
+            "nombre": "song.mp3",
+            "decision": "master",
+            "tamano": 2048,
+            "carpeta": r"C:\music",
+            "ruta": r"C:\music\song.mp3",
+            "md5": "filehash",
+            "audio_md5": "audiohash",
+        })
+
+        self.assertEqual(preview.name.text(), "song.mp3")
+        self.assertEqual(preview.state.text(), "Keep")
+        self.assertEqual(preview.size.text(), "2.00 KB")
+        self.assertEqual(preview.md5.text(), "filehash")
+        self.assertEqual(preview.audio_md5.text(), "audiohash")
+        app.processEvents()
 
 
 if __name__ == "__main__":

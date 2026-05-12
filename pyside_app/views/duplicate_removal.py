@@ -23,6 +23,7 @@ from pyside_app.config import MATCH_OPTIONS, RULE_OPTIONS
 from pyside_app.data_sources import duplicate_group_summaries
 from pyside_app.db import open_conn
 from pyside_app.models.duplicate_tables import DuplicateFilesModel, DuplicateGroupsModel
+from pyside_app.widgets.file_preview import FilePreviewWidget
 from review_state import save_decision, save_decisions_bulk
 from undo_service import UndoStack
 
@@ -62,6 +63,8 @@ class DuplicateRemovalView(QWidget):
         self.files.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.files.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.files.hideColumn(6)
+        self.files.selectionModel().selectionChanged.connect(self.update_preview)
+        self.preview = FilePreviewWidget(self)
 
         keep = QPushButton("Keep")
         trash = QPushButton("Trash")
@@ -123,7 +126,8 @@ class DuplicateRemovalView(QWidget):
         splitter = QSplitter(Qt.Vertical)
         splitter.addWidget(self.table)
         splitter.addWidget(self.files)
-        splitter.setSizes([300, 420])
+        splitter.addWidget(self.preview)
+        splitter.setSizes([260, 360, 180])
 
         layout = QVBoxLayout(self)
         layout.addLayout(toolbar)
@@ -158,6 +162,7 @@ class DuplicateRemovalView(QWidget):
             self.summary.setText("Database not found")
             self.group_model.set_groups([])
             self.file_model.set_files([])
+            self.preview.set_file(None)
             return
 
         group_ids, visible_group_ids, group_rows, total_files = duplicate_group_summaries(
@@ -170,6 +175,7 @@ class DuplicateRemovalView(QWidget):
         self.file_model.set_files([])
         self.current_group_id = None
         self.current_rows = []
+        self.preview.set_file(None)
         self.loaded_group_ids = visible_group_ids
         self.group_model.set_groups(group_rows)
         suffix = " Showing first 500." if len(group_ids) > len(visible_group_ids) else ""
@@ -189,6 +195,7 @@ class DuplicateRemovalView(QWidget):
 
     def render_files(self):
         self.file_model.set_files(self.current_rows)
+        self.preview.set_file(None)
 
     def selected_file_rows(self):
         selected = self.files.selectionModel().selectedRows()
@@ -203,6 +210,10 @@ class DuplicateRemovalView(QWidget):
             return None
         path = row.get("ruta")
         return path if path and os.path.exists(path) else None
+
+    def update_preview(self, *_args):
+        rows = self.selected_file_rows()
+        self.preview.set_file(rows[0] if rows else None)
 
     def set_selected_file_state(self, decision):
         rows = self.selected_file_rows()

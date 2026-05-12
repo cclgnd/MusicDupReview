@@ -52,3 +52,10 @@ class FileExplorerModel(QAbstractTableModel):
         if not index.isValid():
             return Qt.NoItemFlags
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+    def file_rows_at(self, row_indexes):
+        rows = []
+        for row_index in row_indexes:
+            if 0 <= row_index < len(self.rows):
+                rows.append(self.rows[row_index])
+        return rows

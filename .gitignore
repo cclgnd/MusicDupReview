@@ -1,0 +1,47 @@
+# Python runtime/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local environments and package caches
+.venv/
+.uv-cache/
+.uv-python/
+.env
+.env.*
+!.env.example
+
+# Local application state and generated data
+*.db
+*.sqlite
+*.sqlite3
+*_backup_*.db
+dup_review_settings.json
+_pending_search_*.db
+
+# Generated duplicate reports and exports contain local media paths.
+duplicados*.csv
+reporte*.md
+report_*.csv
+
+# Local backups and prototypes
+backups/
+html gui PREVIEWS PROTO/
+
+# One-off local diagnostics with machine-specific media paths
+audio_scan_g124.py
+bench_audio_md5.py
+check_g124.py
+check_progress.py
+diff_g124.py
+
+# OS/editor files and local launch shortcuts
+.DS_Store
+Thumbs.db
+*.lnk

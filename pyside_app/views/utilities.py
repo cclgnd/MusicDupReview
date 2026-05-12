@@ -2,9 +2,10 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QLabel, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QLabel, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from database_maintenance import verify_database_files
+from scan_service import scan_folder_to_database
 
 
 class MaintenanceWorker(QThread):
@@ -22,13 +23,34 @@ class MaintenanceWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class FolderScanWorker(QThread):
+    progress = Signal(dict)
+    finished_ok = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, db_path, folder):
+        super().__init__()
+        self.db_path = db_path
+        self.folder = folder
+
+    def run(self):
+        try:
+            self.finished_ok.emit(scan_folder_to_database(self.db_path, self.folder, self.progress.emit))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class UtilitiesView(QWidget):
-    def __init__(self, db_path_getter):
+    def __init__(self, db_path_getter, database_changed=None):
         super().__init__()
         self.db_path_getter = db_path_getter
+        self.database_changed = database_changed
         self.worker = None
+        self.scan_worker = None
         self.status = QLabel("Ready")
         self.backups = QListWidget()
+        self.scan_button = QPushButton("Scan Folder...")
+        self.scan_button.clicked.connect(self.scan_folder)
         check = QPushButton("Check Files Now")
         check.clicked.connect(self.check_files)
         backup = QPushButton("Backup Current Database")
@@ -37,6 +59,7 @@ class UtilitiesView(QWidget):
         refresh_backups.clicked.connect(self.refresh_backups)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.scan_button)
         layout.addWidget(check)
         layout.addWidget(backup)
         layout.addWidget(refresh_backups)
@@ -45,6 +68,55 @@ class UtilitiesView(QWidget):
         layout.addWidget(QLabel("Pending: recent searches, re-unify files, integrity report."))
         layout.addWidget(self.status)
         self.refresh_backups()
+
+    def scan_folder(self):
+        if self.scan_worker and self.scan_worker.isRunning():
+            QMessageBox.information(self, "Scan folder", "A folder scan is already running.")
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Scan music folder")
+        if not folder:
+            return
+        db_path = self.db_path_getter()
+        self.status.setText(f"Scanning folder in background: {folder}")
+        self.scan_button.setEnabled(False)
+        self.scan_worker = FolderScanWorker(db_path, folder)
+        self.scan_worker.progress.connect(self._scan_progress)
+        self.scan_worker.finished_ok.connect(self._scan_finished)
+        self.scan_worker.failed.connect(self._scan_failed)
+        self.scan_worker.start()
+
+    def _scan_progress(self, stats):
+        self.status.setText(
+            f"Scanning... {stats['discovered']:,} files seen, {stats['new']:,} new, {stats['updated']:,} updated"
+        )
+
+    def _scan_finished(self, stats):
+        self.scan_button.setEnabled(True)
+        self.status.setText(
+            f"Scan complete: {stats['duplicate_groups']:,} duplicate groups, {stats['duplicate_files']:,} duplicate files"
+        )
+        if self.database_changed:
+            self.database_changed()
+        QMessageBox.information(
+            self,
+            "Scan complete",
+            "\n".join([
+                f"Folder: {stats['root']}",
+                f"Files found: {stats['discovered']:,}",
+                f"New files: {stats['new']:,}",
+                f"Updated files: {stats['updated']:,}",
+                f"Unchanged files: {stats['unchanged']:,}",
+                f"Hash errors: {stats['errors']:,}",
+                f"Duplicate groups: {stats['duplicate_groups']:,}",
+                f"Duplicate files: {stats['duplicate_files']:,}",
+                f"Elapsed: {stats['elapsed_seconds']:.1f}s",
+            ]),
+        )
+
+    def _scan_failed(self, message):
+        self.scan_button.setEnabled(True)
+        self.status.setText("Scan failed")
+        QMessageBox.critical(self, "Scan folder", message)
 
     def check_files(self):
         db_path = self.db_path_getter()

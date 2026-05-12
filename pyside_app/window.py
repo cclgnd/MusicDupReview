@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
         self.views = [
             ("Duplicate Removal", DuplicateRemovalView(self.current_db_path)),
             ("File Explorer", FileExplorerView(self.current_db_path)),
-            ("Utilities", UtilitiesView(self.current_db_path)),
+            ("Utilities", UtilitiesView(self.current_db_path, self.refresh_data_views)),
         ]
         for label, widget in self.views:
             self.nav.addItem(QListWidgetItem(label))
@@ -81,6 +81,12 @@ class MainWindow(QMainWindow):
         widget = self.stack.currentWidget()
         if hasattr(widget, "refresh"):
             widget.refresh()
+
+    def refresh_data_views(self):
+        for index in range(self.stack.count()):
+            widget = self.stack.widget(index)
+            if hasattr(widget, "refresh"):
+                widget.refresh()
 
     def toggle_playback(self):
         if self.playing_path:

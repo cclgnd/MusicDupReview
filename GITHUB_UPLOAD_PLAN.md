@@ -4,7 +4,7 @@
 
 - Owner: `cclgnd`
 - Repository: `MusicDupReview`
-- Visibility: private unless explicitly changed before creation.
+- Visibility: public.
 
 ## Included
 

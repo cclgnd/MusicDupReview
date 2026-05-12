@@ -2,7 +2,17 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from database_maintenance import verify_database_files
 from scan_service import scan_folder_to_database
@@ -59,6 +69,10 @@ class UtilitiesView(QWidget):
         self.worker = None
         self.scan_worker = None
         self.status = QLabel("Ready")
+        self.scan_detail = QLabel("")
+        self.scan_detail.setWordWrap(True)
+        self.scan_progress = QProgressBar()
+        self.scan_progress.setVisible(False)
         self.backups = QListWidget()
         self.scan_button = QPushButton("Scan Folder...")
         self.scan_button.clicked.connect(self.scan_folder)
@@ -81,6 +95,8 @@ class UtilitiesView(QWidget):
         layout.addWidget(check)
         layout.addWidget(backup)
         layout.addWidget(refresh_backups)
+        layout.addWidget(self.scan_progress)
+        layout.addWidget(self.scan_detail)
         layout.addWidget(QLabel("Backups"))
         layout.addWidget(self.backups, 1)
         layout.addWidget(QLabel("Pending: recent searches, re-unify files, integrity report."))
@@ -96,6 +112,9 @@ class UtilitiesView(QWidget):
             return
         db_path = self.db_path_getter()
         self.status.setText(f"Scanning folder in background: {folder}")
+        self.scan_detail.setText(folder)
+        self.scan_progress.setRange(0, 0)
+        self.scan_progress.setVisible(True)
         self.scan_button.setEnabled(False)
         self.cancel_scan_button.setEnabled(True)
         self.scan_worker = FolderScanWorker(db_path, folder)
@@ -114,13 +133,19 @@ class UtilitiesView(QWidget):
         self.status.setText(
             f"Scanning... {stats['discovered']:,} files seen, {stats['new']:,} new, {stats['updated']:,} updated"
         )
+        current = stats.get("current_path") or stats.get("current_folder") or stats.get("root") or ""
+        self.scan_detail.setText(current)
 
     def _scan_finished(self, stats):
         self.scan_button.setEnabled(True)
         self.cancel_scan_button.setEnabled(False)
+        self.scan_progress.setVisible(False)
         title = "Scan cancelled" if stats.get("cancelled") else "Scan complete"
         self.status.setText(
             f"{title}: {stats['duplicate_groups']:,} duplicate groups, {stats['duplicate_files']:,} duplicate files"
+        )
+        self.scan_detail.setText(
+            f"{stats['discovered']:,} files processed from {stats['root']}"
         )
         if self.database_changed:
             self.database_changed()
@@ -144,7 +169,9 @@ class UtilitiesView(QWidget):
     def _scan_failed(self, message):
         self.scan_button.setEnabled(True)
         self.cancel_scan_button.setEnabled(False)
+        self.scan_progress.setVisible(False)
         self.status.setText("Scan failed")
+        self.scan_detail.setText("")
         QMessageBox.critical(self, "Scan folder", message)
 
     def check_files(self):

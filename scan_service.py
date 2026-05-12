@@ -26,6 +26,8 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
         "duplicate_files": 0,
         "elapsed_seconds": 0.0,
         "cancelled": False,
+        "current_path": "",
+        "current_folder": "",
     }
 
     conn = sqlite3.connect(db_path)
@@ -37,6 +39,8 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
             if should_cancel and should_cancel():
                 stats["cancelled"] = True
                 break
+            stats["current_path"] = str(path)
+            stats["current_folder"] = str(path.parent)
             stats["discovered"] += 1
             if progress_callback and stats["discovered"] % 100 == 0:
                 progress_callback(dict(stats))
@@ -51,6 +55,8 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
                 conn.commit()
 
         conn.commit()
+        if progress_callback:
+            progress_callback(dict(stats))
         if not stats["cancelled"]:
             groups, duplicate_files = detect_duplicates(conn)
             stats["duplicate_groups"] = groups

@@ -27,6 +27,8 @@ class ScanServiceTests(unittest.TestCase):
                 self.assertEqual(stats["errors"], 0)
                 self.assertEqual(stats["duplicate_groups"], 1)
                 self.assertEqual(stats["duplicate_files"], 2)
+                self.assertIn(Path(stats["current_path"]).name, {"one.txt", "two.txt", "three.txt"})
+                self.assertEqual(stats["current_folder"], root)
 
                 conn = sqlite3.connect(db_path)
                 try:
@@ -64,6 +66,7 @@ class ScanServiceTests(unittest.TestCase):
                 self.assertTrue(stats["cancelled"])
                 self.assertEqual(stats["discovered"], 3)
                 self.assertEqual(stats["duplicate_groups"], 0)
+                self.assertTrue(stats["current_path"].endswith("2.txt"))
                 conn = sqlite3.connect(db_path)
                 try:
                     total = conn.execute("SELECT COUNT(*) FROM archivos").fetchone()[0]

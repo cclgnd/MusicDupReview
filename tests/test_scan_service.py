@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pyside_app.settings import load_app_settings, save_app_settings
+from pyside_app.config import DEFAULT_DB
+from pyside_app.settings import initial_database_path, load_app_settings, save_app_settings
 from scan_service import scan_folder_to_database, scan_history_rows, scan_summary_lines
 
 
@@ -107,6 +108,18 @@ class ScanServiceTests(unittest.TestCase):
 
             settings_path.write_text("{invalid", encoding="utf-8")
             self.assertEqual(load_app_settings(settings_path), {})
+
+    def test_initial_database_path_prefers_cli_then_saved_then_default(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings_path = Path(root) / "settings.json"
+
+            self.assertEqual(initial_database_path(settings_path=settings_path), DEFAULT_DB)
+            save_app_settings({"db_path": r"C:\music\saved.sqlite"}, settings_path)
+            self.assertEqual(initial_database_path(settings_path=settings_path), r"C:\music\saved.sqlite")
+            self.assertEqual(
+                initial_database_path(r"C:\music\cli.sqlite", settings_path=settings_path),
+                r"C:\music\cli.sqlite",
+            )
 
 
 if __name__ == "__main__":

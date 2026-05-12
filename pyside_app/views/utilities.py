@@ -1,7 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -79,6 +80,8 @@ class UtilitiesView(QWidget):
         self.scan_history = QListWidget()
         self.scan_button = QPushButton("Scan Folder...")
         self.scan_button.clicked.connect(self.scan_folder)
+        self.open_scan_folder_button = QPushButton("Open Last Scan Folder")
+        self.open_scan_folder_button.clicked.connect(self.open_last_scan_folder)
         self.cancel_scan_button = QPushButton("Cancel Scan")
         self.cancel_scan_button.setEnabled(False)
         self.cancel_scan_button.clicked.connect(self.cancel_scan)
@@ -91,6 +94,7 @@ class UtilitiesView(QWidget):
 
         scan_actions = QHBoxLayout()
         scan_actions.addWidget(self.scan_button)
+        scan_actions.addWidget(self.open_scan_folder_button)
         scan_actions.addWidget(self.cancel_scan_button)
 
         layout = QVBoxLayout(self)
@@ -113,6 +117,7 @@ class UtilitiesView(QWidget):
         if self.scan_worker and self.scan_worker.isRunning():
             QMessageBox.information(self, "Scan folder", "A folder scan is already running.")
             return
+        self.settings = load_app_settings()
         start_folder = self.settings.get("last_scan_folder", "")
         if start_folder and not Path(start_folder).is_dir():
             start_folder = ""
@@ -174,6 +179,14 @@ class UtilitiesView(QWidget):
         self.status.setText("Scan failed")
         self.scan_detail.setText("")
         QMessageBox.critical(self, "Scan folder", message)
+
+    def open_last_scan_folder(self):
+        settings = load_app_settings()
+        folder = settings.get("last_scan_folder", "")
+        if not folder or not Path(folder).is_dir():
+            QMessageBox.information(self, "Scan folder", "No existing scan folder is saved.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def check_files(self):
         db_path = self.db_path_getter()

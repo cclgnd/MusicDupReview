@@ -16,16 +16,18 @@ from PySide6.QtWidgets import (
 )
 
 from playback_service import PlaybackService
-from pyside_app.config import DEFAULT_DB
+from pyside_app.settings import initial_database_path, load_app_settings, save_app_settings
 from pyside_app.views.duplicate_removal import DuplicateRemovalView
 from pyside_app.views.file_explorer import FileExplorerView
+from pyside_app.views.settings_view import SettingsView
 from pyside_app.views.utilities import UtilitiesView
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db_path=DEFAULT_DB):
+    def __init__(self, db_path=None):
         super().__init__()
-        self.db_path = db_path
+        self.settings = load_app_settings()
+        self.db_path = db_path or initial_database_path()
         self.playback = PlaybackService()
         self.playing_path = None
         self.setWindowTitle("Music Duplicate Review - PySide6")
@@ -37,6 +39,7 @@ class MainWindow(QMainWindow):
             ("Duplicate Removal", DuplicateRemovalView(self.current_db_path)),
             ("File Explorer", FileExplorerView(self.current_db_path)),
             ("Utilities", UtilitiesView(self.current_db_path, self.refresh_data_views)),
+            ("Settings", SettingsView(self.current_db_path, self.set_database)),
         ]
         for label, widget in self.views:
             self.nav.addItem(QListWidgetItem(label))
@@ -73,9 +76,15 @@ class MainWindow(QMainWindow):
             self, "Open duplicate database", self.db_path, "SQLite database (*.db *.sqlite);;All files (*.*)"
         )
         if path:
-            self.db_path = path
-            self.statusBar().showMessage(self.db_path)
-            self.refresh_current_view()
+            self.set_database(path)
+
+    def set_database(self, path):
+        self.db_path = path
+        self.settings = load_app_settings()
+        self.settings["db_path"] = path
+        save_app_settings(self.settings)
+        self.statusBar().showMessage(self.db_path)
+        self.refresh_data_views()
 
     def refresh_current_view(self):
         widget = self.stack.currentWidget()
@@ -124,4 +133,4 @@ class MainWindow(QMainWindow):
 
 
 def default_db_arg():
-    return sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DB
+    return initial_database_path(sys.argv[1] if len(sys.argv) > 1 else None)

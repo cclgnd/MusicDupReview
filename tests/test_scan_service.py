@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scan_service import scan_folder_to_database
+from pyside_app.settings import load_app_settings, save_app_settings
+from scan_service import scan_folder_to_database, scan_history_rows, scan_summary_lines
 
 
 class ScanServiceTests(unittest.TestCase):
@@ -42,6 +43,16 @@ class ScanServiceTests(unittest.TestCase):
                 repeat_stats = scan_folder_to_database(db_path, root)
                 self.assertEqual(repeat_stats["new"], 0)
                 self.assertEqual(repeat_stats["unchanged"], 3)
+
+                history = scan_history_rows(db_path)
+                self.assertEqual(len(history), 2)
+                self.assertIn("complete", history[0])
+                self.assertIn("3 files", history[0])
+                self.assertIn(root, history[0])
+
+                summary = scan_summary_lines(stats)
+                self.assertIn("Status: Scan complete", summary)
+                self.assertIn("Duplicate files: 2", summary)
             finally:
                 os.unlink(db_path)
 
@@ -75,8 +86,27 @@ class ScanServiceTests(unittest.TestCase):
                     conn.close()
                 self.assertEqual(total, 3)
                 self.assertIn("cancelled=1", notes)
+
+                history = scan_history_rows(db_path)
+                self.assertEqual(len(history), 1)
+                self.assertIn("cancelled", history[0])
+                self.assertIn(root, history[0])
+
+                summary = scan_summary_lines(stats)
+                self.assertIn("Status: Scan cancelled", summary)
             finally:
                 os.unlink(db_path)
+
+    def test_app_settings_round_trip_and_ignore_invalid_json(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings_path = Path(root) / "settings.json"
+
+            self.assertEqual(load_app_settings(settings_path), {})
+            save_app_settings({"last_scan_folder": root}, settings_path)
+            self.assertEqual(load_app_settings(settings_path)["last_scan_folder"], root)
+
+            settings_path.write_text("{invalid", encoding="utf-8")
+            self.assertEqual(load_app_settings(settings_path), {})
 
 
 if __name__ == "__main__":

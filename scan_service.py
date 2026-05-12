@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 
 from db_repository import ensure_schema
@@ -76,6 +77,63 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
         return stats
     finally:
         conn.close()
+
+
+def scan_summary_lines(stats):
+    title = "Scan cancelled" if stats.get("cancelled") else "Scan complete"
+    return [
+        f"Folder: {stats['root']}",
+        f"Status: {title}",
+        f"Files found: {stats['discovered']:,}",
+        f"New files: {stats['new']:,}",
+        f"Updated files: {stats['updated']:,}",
+        f"Unchanged files: {stats['unchanged']:,}",
+        f"Hash errors: {stats['errors']:,}",
+        f"Duplicate groups: {stats['duplicate_groups']:,}",
+        f"Duplicate files: {stats['duplicate_files']:,}",
+        f"Elapsed: {stats['elapsed_seconds']:.1f}s",
+    ]
+
+
+def scan_history_rows(db_path, limit=20):
+    if not Path(db_path).exists():
+        return []
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT inicio, fin, total_archivos, total_duplicados, notas
+            FROM escaneos
+            ORDER BY COALESCE(fin, inicio) DESC
+            LIMIT ?
+        """, (int(limit),))
+        return [format_scan_history_row(dict(row)) for row in cursor.fetchall()]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+def format_scan_history_row(row):
+    notes = row.get("notas") or ""
+    root = value_from_notes(notes, "root") or "unknown folder"
+    cancelled = value_from_notes(notes, "cancelled") == "1"
+    status = "cancelled" if cancelled else "complete"
+    timestamp = row.get("fin") or row.get("inicio") or 0
+    when = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M") if timestamp else "unknown time"
+    return (
+        f"{when} - {status} - {int(row.get('total_archivos') or 0):,} files, "
+        f"{int(row.get('total_duplicados') or 0):,} duplicate files - {root}"
+    )
+
+
+def value_from_notes(notes, key):
+    prefix = f"{key}="
+    for part in (notes or "").split(";"):
+        if part.startswith(prefix):
+            return part[len(prefix):]
+    return ""
 
 
 def iter_files(root):

@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from database_maintenance import verify_database_files
-from scan_service import scan_folder_to_database
+from pyside_app.settings import load_app_settings, save_app_settings
+from scan_service import scan_folder_to_database, scan_history_rows, scan_summary_lines
 
 
 class MaintenanceWorker(QThread):
@@ -66,6 +67,7 @@ class UtilitiesView(QWidget):
         super().__init__()
         self.db_path_getter = db_path_getter
         self.database_changed = database_changed
+        self.settings = load_app_settings()
         self.worker = None
         self.scan_worker = None
         self.status = QLabel("Ready")
@@ -74,6 +76,7 @@ class UtilitiesView(QWidget):
         self.scan_progress = QProgressBar()
         self.scan_progress.setVisible(False)
         self.backups = QListWidget()
+        self.scan_history = QListWidget()
         self.scan_button = QPushButton("Scan Folder...")
         self.scan_button.clicked.connect(self.scan_folder)
         self.cancel_scan_button = QPushButton("Cancel Scan")
@@ -97,19 +100,27 @@ class UtilitiesView(QWidget):
         layout.addWidget(refresh_backups)
         layout.addWidget(self.scan_progress)
         layout.addWidget(self.scan_detail)
+        layout.addWidget(QLabel("Recent Scans"))
+        layout.addWidget(self.scan_history, 1)
         layout.addWidget(QLabel("Backups"))
         layout.addWidget(self.backups, 1)
         layout.addWidget(QLabel("Pending: recent searches, re-unify files, integrity report."))
         layout.addWidget(self.status)
+        self.refresh_scan_history()
         self.refresh_backups()
 
     def scan_folder(self):
         if self.scan_worker and self.scan_worker.isRunning():
             QMessageBox.information(self, "Scan folder", "A folder scan is already running.")
             return
-        folder = QFileDialog.getExistingDirectory(self, "Scan music folder")
+        start_folder = self.settings.get("last_scan_folder", "")
+        if start_folder and not Path(start_folder).is_dir():
+            start_folder = ""
+        folder = QFileDialog.getExistingDirectory(self, "Scan music folder", start_folder)
         if not folder:
             return
+        self.settings["last_scan_folder"] = folder
+        save_app_settings(self.settings)
         db_path = self.db_path_getter()
         self.status.setText(f"Scanning folder in background: {folder}")
         self.scan_detail.setText(folder)
@@ -149,21 +160,11 @@ class UtilitiesView(QWidget):
         )
         if self.database_changed:
             self.database_changed()
+        self.refresh_scan_history()
         QMessageBox.information(
             self,
             title,
-            "\n".join([
-                f"Folder: {stats['root']}",
-                f"Status: {title}",
-                f"Files found: {stats['discovered']:,}",
-                f"New files: {stats['new']:,}",
-                f"Updated files: {stats['updated']:,}",
-                f"Unchanged files: {stats['unchanged']:,}",
-                f"Hash errors: {stats['errors']:,}",
-                f"Duplicate groups: {stats['duplicate_groups']:,}",
-                f"Duplicate files: {stats['duplicate_files']:,}",
-                f"Elapsed: {stats['elapsed_seconds']:.1f}s",
-            ]),
+            "\n".join(scan_summary_lines(stats)),
         )
 
     def _scan_failed(self, message):
@@ -214,3 +215,8 @@ class UtilitiesView(QWidget):
             return
         for path in sorted(backup_dir.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)[:100]:
             self.backups.addItem(str(path))
+
+    def refresh_scan_history(self):
+        self.scan_history.clear()
+        for row in scan_history_rows(self.db_path_getter(), limit=20):
+            self.scan_history.addItem(row)

@@ -2,8 +2,17 @@ import os
 from contextlib import closing
 
 from db_repository import duplicate_group_ids, duplicate_group_rows
+from db_repository import duplicate_extensions as db_duplicate_extensions
 from pyside_app.db import open_conn
 from pyside_app.formatting import format_bytes
+
+
+def duplicate_extension_values(db_path):
+    if not os.path.exists(db_path):
+        return []
+
+    with closing(open_conn(db_path)) as conn:
+        return db_duplicate_extensions(conn)
 
 
 def duplicate_group_summaries(

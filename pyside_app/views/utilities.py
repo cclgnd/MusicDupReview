@@ -11,11 +11,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from database_maintenance import verify_database_files
+from database_maintenance import database_integrity_report, verify_database_files
 from pyside_app.settings import load_app_settings, save_app_settings
 from scan_service import scan_folder_to_database, scan_history_rows, scan_summary_lines
 
@@ -78,6 +79,8 @@ class UtilitiesView(QWidget):
         self.scan_progress.setVisible(False)
         self.backups = QListWidget()
         self.scan_history = QListWidget()
+        self.integrity_report = QTextEdit()
+        self.integrity_report.setReadOnly(True)
         self.scan_button = QPushButton("Scan Folder...")
         self.scan_button.clicked.connect(self.scan_folder)
         self.open_scan_folder_button = QPushButton("Open Last Scan Folder")
@@ -87,6 +90,8 @@ class UtilitiesView(QWidget):
         self.cancel_scan_button.clicked.connect(self.cancel_scan)
         check = QPushButton("Check Files Now")
         check.clicked.connect(self.check_files)
+        integrity = QPushButton("Refresh Integrity Report")
+        integrity.clicked.connect(self.refresh_integrity_report)
         backup = QPushButton("Backup Current Database")
         backup.clicked.connect(self.backup_database)
         refresh_backups = QPushButton("Refresh Backup List")
@@ -100,6 +105,7 @@ class UtilitiesView(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(scan_actions)
         layout.addWidget(check)
+        layout.addWidget(integrity)
         layout.addWidget(backup)
         layout.addWidget(refresh_backups)
         layout.addWidget(self.scan_progress)
@@ -108,10 +114,12 @@ class UtilitiesView(QWidget):
         layout.addWidget(self.scan_history, 1)
         layout.addWidget(QLabel("Backups"))
         layout.addWidget(self.backups, 1)
-        layout.addWidget(QLabel("Pending: recent searches, re-unify files, integrity report."))
+        layout.addWidget(QLabel("Integrity Report"))
+        layout.addWidget(self.integrity_report, 1)
         layout.addWidget(self.status)
         self.refresh_scan_history()
         self.refresh_backups()
+        self.refresh_integrity_report()
 
     def scan_folder(self):
         if self.scan_worker and self.scan_worker.isRunning():
@@ -147,7 +155,7 @@ class UtilitiesView(QWidget):
 
     def _scan_progress(self, stats):
         self.status.setText(
-            f"Scanning... {stats['discovered']:,} files seen, {stats['new']:,} new, {stats['updated']:,} updated"
+            f"Scanning... {stats['discovered']:,} files seen, {stats['files_per_second']:.1f}/s, {stats['new']:,} new"
         )
         current = stats.get("current_path") or stats.get("current_folder") or stats.get("root") or ""
         self.scan_detail.setText(current)
@@ -166,6 +174,7 @@ class UtilitiesView(QWidget):
         if self.database_changed:
             self.database_changed()
         self.refresh_scan_history()
+        self.refresh_integrity_report()
         QMessageBox.information(
             self,
             title,
@@ -233,3 +242,7 @@ class UtilitiesView(QWidget):
         self.scan_history.clear()
         for row in scan_history_rows(self.db_path_getter(), limit=20):
             self.scan_history.addItem(row)
+
+    def refresh_integrity_report(self):
+        report = database_integrity_report(self.db_path_getter())
+        self.integrity_report.setPlainText("\n".join(report["lines"]))

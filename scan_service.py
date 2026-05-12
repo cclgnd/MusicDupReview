@@ -26,6 +26,7 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
         "duplicate_groups": 0,
         "duplicate_files": 0,
         "elapsed_seconds": 0.0,
+        "files_per_second": 0.0,
         "cancelled": False,
         "current_path": "",
         "current_folder": "",
@@ -43,6 +44,7 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
             stats["current_path"] = str(path)
             stats["current_folder"] = str(path.parent)
             stats["discovered"] += 1
+            update_scan_timing(stats, started)
             if progress_callback and stats["discovered"] % 100 == 0:
                 progress_callback(dict(stats))
             try:
@@ -62,7 +64,7 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
             groups, duplicate_files = detect_duplicates(conn)
             stats["duplicate_groups"] = groups
             stats["duplicate_files"] = duplicate_files
-        stats["elapsed_seconds"] = time.time() - started
+        update_scan_timing(stats, started)
         cursor.execute(
             "INSERT INTO escaneos (inicio, fin, total_archivos, total_duplicados, notas) VALUES (?,?,?,?,?)",
             (
@@ -79,6 +81,12 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None, should_c
         conn.close()
 
 
+def update_scan_timing(stats, started):
+    elapsed = time.time() - started
+    stats["elapsed_seconds"] = elapsed
+    stats["files_per_second"] = (stats["discovered"] / elapsed) if elapsed > 0 else 0.0
+
+
 def scan_summary_lines(stats):
     title = "Scan cancelled" if stats.get("cancelled") else "Scan complete"
     return [
@@ -92,6 +100,7 @@ def scan_summary_lines(stats):
         f"Duplicate groups: {stats['duplicate_groups']:,}",
         f"Duplicate files: {stats['duplicate_files']:,}",
         f"Elapsed: {stats['elapsed_seconds']:.1f}s",
+        f"Rate: {stats.get('files_per_second', 0.0):.1f} files/s",
     ]
 
 

@@ -1,6 +1,6 @@
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -16,16 +16,48 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
-from db_repository import duplicate_extensions, duplicate_group_ids, duplicate_group_rows
+from db_repository import duplicate_group_ids, duplicate_group_rows
 from duplicate_rules import apply_rule_to_groups, rule_label
 from file_actions import FileActionError, send_to_recycle_bin
 from pyside_app.config import MATCH_OPTIONS, RULE_OPTIONS
-from pyside_app.data_sources import duplicate_group_summaries
+from pyside_app.data_sources import duplicate_extension_values, duplicate_group_summaries
 from pyside_app.db import open_conn
 from pyside_app.models.duplicate_tables import DuplicateFilesModel, DuplicateGroupsModel
 from pyside_app.widgets.file_preview import FilePreviewWidget
 from review_state import save_decision, save_decisions_bulk
 from undo_service import UndoStack
+
+
+class DuplicateRefreshWorker(QThread):
+    finished_ok = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, db_path, match_filter, extension_filter, search_text, group_sort):
+        super().__init__()
+        self.db_path = db_path
+        self.match_filter = match_filter
+        self.extension_filter = extension_filter
+        self.search_text = search_text
+        self.group_sort = group_sort
+
+    def run(self):
+        try:
+            group_ids, visible_group_ids, group_rows, total_files = duplicate_group_summaries(
+                self.db_path,
+                match_filter=self.match_filter,
+                extension_filter=self.extension_filter,
+                search_text=self.search_text,
+                group_sort=self.group_sort,
+            )
+            self.finished_ok.emit({
+                "extensions": duplicate_extension_values(self.db_path),
+                "group_ids": group_ids,
+                "visible_group_ids": visible_group_ids,
+                "group_rows": group_rows,
+                "total_files": total_files,
+            })
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class DuplicateRemovalView(QWidget):
@@ -47,6 +79,7 @@ class DuplicateRemovalView(QWidget):
         self.current_group_id = None
         self.current_rows = []
         self.loaded_group_ids = []
+        self.refresh_worker = None
         self.undo_stack = UndoStack(maxlen=400)
         self.group_model = DuplicateGroupsModel(self)
         self.file_model = DuplicateFilesModel(self)
@@ -95,8 +128,8 @@ class DuplicateRemovalView(QWidget):
         QShortcut(QKeySequence("D"), self, activated=self.recycle_selected_files_direct)
         QShortcut(QKeySequence("Ctrl+Z"), self, activated=self.undo_last_action)
 
-        refresh = QPushButton("Refresh")
-        refresh.clicked.connect(self.refresh)
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.refresh)
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("Match"))
         toolbar.addWidget(self.match)
@@ -105,7 +138,7 @@ class DuplicateRemovalView(QWidget):
         toolbar.addWidget(QLabel("Sort"))
         toolbar.addWidget(self.sort)
         toolbar.addWidget(self.search, 1)
-        toolbar.addWidget(refresh)
+        toolbar.addWidget(self.refresh_button)
 
         actions = QHBoxLayout()
         actions.addWidget(keep)
@@ -140,23 +173,18 @@ class DuplicateRemovalView(QWidget):
         self.sort.currentIndexChanged.connect(self.refresh)
         self.search.returnPressed.connect(self.refresh)
 
-    def refresh_extensions(self):
+    def set_extension_values(self, extensions):
         current = self.extension.currentData() or "ALL"
         self.extension.blockSignals(True)
         self.extension.clear()
         self.extension.addItem("All", "ALL")
-        try:
-            with open_conn(self.db_path_getter()) as conn:
-                for ext in duplicate_extensions(conn):
-                    self.extension.addItem(ext, ext)
-        except Exception:
-            pass
+        for ext in extensions:
+            self.extension.addItem(ext, ext)
         index = self.extension.findData(current)
         self.extension.setCurrentIndex(max(0, index))
         self.extension.blockSignals(False)
 
     def refresh(self):
-        self.refresh_extensions()
         db_path = self.db_path_getter()
         if not os.path.exists(db_path):
             self.summary.setText("Database not found")
@@ -164,22 +192,38 @@ class DuplicateRemovalView(QWidget):
             self.file_model.set_files([])
             self.preview.set_file(None)
             return
-
-        group_ids, visible_group_ids, group_rows, total_files = duplicate_group_summaries(
+        if self.refresh_worker and self.refresh_worker.isRunning():
+            self.summary.setText("Duplicate refresh already running.")
+            return
+        self.summary.setText("Loading duplicate groups...")
+        self.refresh_button.setEnabled(False)
+        self.refresh_worker = DuplicateRefreshWorker(
             db_path,
-            match_filter=self.match.currentData(),
-            extension_filter=self.extension.currentData() or "ALL",
-            search_text=self.search.text().strip(),
-            group_sort=self.sort.currentText(),
+            self.match.currentData(),
+            self.extension.currentData() or "ALL",
+            self.search.text().strip(),
+            self.sort.currentText(),
         )
+        self.refresh_worker.finished_ok.connect(self._refresh_finished)
+        self.refresh_worker.failed.connect(self._refresh_failed)
+        self.refresh_worker.start()
+
+    def _refresh_finished(self, result):
+        self.refresh_button.setEnabled(True)
+        self.set_extension_values(result["extensions"])
         self.file_model.set_files([])
         self.current_group_id = None
         self.current_rows = []
         self.preview.set_file(None)
-        self.loaded_group_ids = visible_group_ids
-        self.group_model.set_groups(group_rows)
-        suffix = " Showing first 500." if len(group_ids) > len(visible_group_ids) else ""
-        self.summary.setText(f"{len(group_ids):,} groups, {total_files:,} files loaded.{suffix}")
+        self.loaded_group_ids = result["visible_group_ids"]
+        self.group_model.set_groups(result["group_rows"])
+        suffix = " Showing first 500." if len(result["group_ids"]) > len(result["visible_group_ids"]) else ""
+        self.summary.setText(f"{len(result['group_ids']):,} groups, {result['total_files']:,} files loaded.{suffix}")
+
+    def _refresh_failed(self, message):
+        self.refresh_button.setEnabled(True)
+        self.summary.setText("Duplicate refresh failed")
+        QMessageBox.critical(self, "Refresh", message)
 
     def load_selected_group(self, *_args):
         selected = self.table.selectionModel().selectedRows()

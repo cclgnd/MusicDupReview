@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from database_maintenance import database_integrity_report
+from db_repository import ensure_schema
 from pyside_app.config import DEFAULT_DB
 from pyside_app.settings import initial_database_path, load_app_settings, save_app_settings
 from scan_service import scan_folder_to_database, scan_history_rows, scan_summary_lines
@@ -29,6 +31,7 @@ class ScanServiceTests(unittest.TestCase):
                 self.assertEqual(stats["errors"], 0)
                 self.assertEqual(stats["duplicate_groups"], 1)
                 self.assertEqual(stats["duplicate_files"], 2)
+                self.assertGreater(stats["files_per_second"], 0)
                 self.assertIn(Path(stats["current_path"]).name, {"one.txt", "two.txt", "three.txt"})
                 self.assertEqual(stats["current_folder"], root)
 
@@ -54,6 +57,7 @@ class ScanServiceTests(unittest.TestCase):
                 summary = scan_summary_lines(stats)
                 self.assertIn("Status: Scan complete", summary)
                 self.assertIn("Duplicate files: 2", summary)
+                self.assertTrue(any(line.startswith("Rate: ") for line in summary))
             finally:
                 os.unlink(db_path)
 
@@ -120,6 +124,35 @@ class ScanServiceTests(unittest.TestCase):
                 initial_database_path(r"C:\music\cli.sqlite", settings_path=settings_path),
                 r"C:\music\cli.sqlite",
             )
+
+    def test_integrity_report_flags_orphan_and_incomplete_rows(self):
+        db = tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite")
+        db_path = db.name
+        db.close()
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                ensure_schema(conn)
+                conn.execute("""
+                    INSERT INTO archivos (ruta, carpeta, nombre, extension, tamano, fecha_mod, escaneado)
+                    VALUES (?,?,?,?,?,?,?)
+                """, (r"C:\missing\a.mp3", r"C:\missing", "a.mp3", ".mp3", 1, 1.0, 1))
+                conn.execute("INSERT INTO duplicados (grupo_id, archivo_id, tipo_match, score) VALUES (?,?,?,?)", (1, 999, "md5", 1.0))
+                conn.execute("INSERT INTO decisiones (archivo_id, decision, fecha) VALUES (?,?,?)", (999, "delete", 0))
+                conn.commit()
+            finally:
+                conn.close()
+
+            report = database_integrity_report(db_path, sample_limit=5)
+
+            self.assertFalse(report["ok"])
+            text = "\n".join(report["lines"])
+            self.assertIn("Orphan duplicate rows: 1", text)
+            self.assertIn("Orphan decision rows: 1", text)
+            self.assertIn("Incomplete duplicate groups: 1", text)
+            self.assertIn("Missing file sample: 1", text)
+        finally:
+            os.unlink(db_path)
 
 
 if __name__ == "__main__":

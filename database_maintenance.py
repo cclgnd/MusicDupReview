@@ -86,6 +86,74 @@ def verify_database_files(db_path):
     }
 
 
+def database_integrity_report(db_path, sample_limit=25):
+    if not os.path.exists(db_path):
+        return {"ok": False, "lines": ["Database not found."]}
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        total = cursor.execute("SELECT COUNT(*) FROM archivos").fetchone()[0]
+        duplicate_rows = cursor.execute("SELECT COUNT(*) FROM duplicados").fetchone()[0]
+        groups = cursor.execute("SELECT COUNT(DISTINCT grupo_id) FROM duplicados").fetchone()[0]
+        orphan_duplicates = cursor.execute("""
+            SELECT COUNT(*)
+            FROM duplicados d
+            LEFT JOIN archivos a ON a.id = d.archivo_id
+            WHERE a.id IS NULL
+        """).fetchone()[0]
+        orphan_decisions = cursor.execute("""
+            SELECT COUNT(*)
+            FROM decisiones de
+            LEFT JOIN archivos a ON a.id = de.archivo_id
+            WHERE a.id IS NULL
+        """).fetchone()[0]
+        incomplete_groups = cursor.execute("""
+            SELECT COUNT(*)
+            FROM (
+                SELECT grupo_id
+                FROM duplicados
+                GROUP BY grupo_id
+                HAVING COUNT(*) < 2
+            )
+        """).fetchone()[0]
+        unreadable = cursor.execute("""
+            SELECT COUNT(*)
+            FROM archivos
+            WHERE COALESCE(error, '') <> ''
+        """).fetchone()[0]
+
+        missing_rows = []
+        for row in cursor.execute("SELECT ruta FROM archivos ORDER BY ruta LIMIT ?", (5000,)):
+            path = row["ruta"]
+            if path and not os.path.exists(path):
+                missing_rows.append(path)
+                if len(missing_rows) >= sample_limit:
+                    break
+
+        issue_count = orphan_duplicates + orphan_decisions + incomplete_groups + unreadable + len(missing_rows)
+        lines = [
+            f"Files in database: {total:,}",
+            f"Duplicate groups: {groups:,}",
+            f"Duplicate rows: {duplicate_rows:,}",
+            f"Missing file sample: {len(missing_rows):,}",
+            f"Unreadable/hash-error rows: {unreadable:,}",
+            f"Orphan duplicate rows: {orphan_duplicates:,}",
+            f"Orphan decision rows: {orphan_decisions:,}",
+            f"Incomplete duplicate groups: {incomplete_groups:,}",
+        ]
+        if missing_rows:
+            lines.append("")
+            lines.append("Missing file sample:")
+            lines.extend(missing_rows)
+        return {"ok": issue_count == 0, "lines": lines}
+    except sqlite3.Error as exc:
+        return {"ok": False, "lines": [f"Integrity report failed: {exc}"]}
+    finally:
+        conn.close()
+
+
 def scan_roots_for_connection(conn):
     roots = set()
     try:

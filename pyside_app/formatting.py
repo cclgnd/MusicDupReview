@@ -1,6 +1,3 @@
-from PySide6.QtGui import QColor
-
-
 def format_bytes(size):
     size = int(size or 0)
     units = ["bytes", "KB", "MB", "GB", "TB"]
@@ -28,6 +25,8 @@ def decision_label(decision):
 
 
 def decision_color(decision):
+    from PySide6.QtGui import QColor
+
     return QColor({
         "master": "#14532d",
         "delete": "#7f1d1d",

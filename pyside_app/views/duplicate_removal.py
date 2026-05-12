@@ -20,8 +20,8 @@ from db_repository import duplicate_extensions, duplicate_group_ids, duplicate_g
 from duplicate_rules import apply_rule_to_groups, rule_label
 from file_actions import FileActionError, send_to_recycle_bin
 from pyside_app.config import MATCH_OPTIONS, RULE_OPTIONS
+from pyside_app.data_sources import duplicate_group_summaries
 from pyside_app.db import open_conn
-from pyside_app.formatting import format_bytes
 from pyside_app.models.duplicate_tables import DuplicateFilesModel, DuplicateGroupsModel
 from review_state import save_decision, save_decisions_bulk
 from undo_service import UndoStack
@@ -159,39 +159,21 @@ class DuplicateRemovalView(QWidget):
             self.group_model.set_groups([])
             self.file_model.set_files([])
             return
-        with open_conn(db_path) as conn:
-            group_ids = duplicate_group_ids(
-                conn,
-                match_filter=self.match.currentData(),
-                extension_filter=self.extension.currentData() or "ALL",
-                search_text=self.search.text().strip(),
-                group_sort=self.sort.currentText(),
-            )
-            group_rows = []
-            self.file_model.set_files([])
-            self.current_group_id = None
-            self.current_rows = []
-            self.loaded_group_ids = group_ids[:500]
-            total_files = 0
-            for group_id in self.loaded_group_ids:
-                rows = duplicate_group_rows(conn, group_id, "hash")
-                if len(rows) < 2:
-                    continue
-                total_files += len(rows)
-                sizes = [row["tamano"] or 0 for row in rows]
-                largest = max(sizes)
-                recoverable = sum(sizes) - largest
-                group_rows.append([
-                    group_id,
-                    str(rows[0].get("tipo_match") or ""),
-                    len(rows),
-                    format_bytes(largest),
-                    format_bytes(recoverable),
-                    rows[0].get("ruta") or "",
-                ])
-            self.group_model.set_groups(group_rows)
-            suffix = " Showing first 500." if len(group_ids) > 500 else ""
-            self.summary.setText(f"{len(group_ids):,} groups, {total_files:,} files loaded.{suffix}")
+
+        group_ids, visible_group_ids, group_rows, total_files = duplicate_group_summaries(
+            db_path,
+            match_filter=self.match.currentData(),
+            extension_filter=self.extension.currentData() or "ALL",
+            search_text=self.search.text().strip(),
+            group_sort=self.sort.currentText(),
+        )
+        self.file_model.set_files([])
+        self.current_group_id = None
+        self.current_rows = []
+        self.loaded_group_ids = visible_group_ids
+        self.group_model.set_groups(group_rows)
+        suffix = " Showing first 500." if len(group_ids) > len(visible_group_ids) else ""
+        self.summary.setText(f"{len(group_ids):,} groups, {total_files:,} files loaded.{suffix}")
 
     def load_selected_group(self, *_args):
         selected = self.table.selectionModel().selectedRows()

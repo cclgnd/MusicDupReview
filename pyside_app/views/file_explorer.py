@@ -1,15 +1,7 @@
-import os
-
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QPushButton, QTableView, QVBoxLayout, QWidget
 
-from pyside_app.db import open_conn
+from pyside_app.data_sources import file_explorer_rows
 from pyside_app.models.file_explorer import FileExplorerModel
-
-
-def file_explorer_order(contiguous_hash_mode):
-    if contiguous_hash_mode:
-        return "COALESCE(a.audio_md5, a.md5, ''), a.carpeta, a.ruta"
-    return "lower(a.nombre)"
 
 
 class FileExplorerView(QWidget):
@@ -37,39 +29,8 @@ class FileExplorerView(QWidget):
         self.contiguous_hash.stateChanged.connect(self.refresh)
 
     def refresh(self):
-        db_path = self.db_path_getter()
-        self.model.set_files([])
-        if not os.path.exists(db_path):
-            return
-        term = f"%{self.search.text().strip()}%"
-        with open_conn(db_path) as conn:
-            cursor = conn.cursor()
-            if self.search.text().strip():
-                cursor.execute("""
-                    SELECT a.nombre, a.extension, a.tamano, a.carpeta, a.ruta, a.md5, a.audio_md5,
-                           COALESCE(d.decision,'') AS decision
-                    FROM archivos a
-                    LEFT JOIN decisiones d ON d.archivo_id = a.id
-                    WHERE a.ruta LIKE ?
-                    ORDER BY """ + file_explorer_order(self.contiguous_hash.isChecked()) + """
-                    LIMIT 500
-                """, (term,))
-            else:
-                cursor.execute("""
-                    SELECT a.nombre, a.extension, a.tamano, a.carpeta, a.ruta, a.md5, a.audio_md5,
-                           COALESCE(d.decision,'') AS decision
-                    FROM archivos a
-                    LEFT JOIN decisiones d ON d.archivo_id = a.id
-                    ORDER BY """ + file_explorer_order(self.contiguous_hash.isChecked()) + """
-                    LIMIT 500
-                """)
-            previous_hash = None
-            rows = []
-            for row in cursor.fetchall():
-                current_hash = row["audio_md5"] or row["md5"] or ""
-                hash_link = "same as previous" if current_hash and current_hash == previous_hash else ""
-                row_data = dict(row)
-                row_data["hash_link"] = hash_link
-                rows.append(row_data)
-                previous_hash = current_hash
-            self.model.set_files(rows)
+        self.model.set_files(file_explorer_rows(
+            self.db_path_getter(),
+            search_text=self.search.text(),
+            contiguous_hash_mode=self.contiguous_hash.isChecked(),
+        ))

@@ -4,13 +4,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
+    QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
     QWidget,
     QLineEdit,
@@ -21,7 +21,8 @@ from duplicate_rules import apply_rule_to_groups, rule_label
 from file_actions import FileActionError, send_to_recycle_bin
 from pyside_app.config import MATCH_OPTIONS, RULE_OPTIONS
 from pyside_app.db import open_conn
-from pyside_app.formatting import decision_color, decision_label, format_bytes
+from pyside_app.formatting import format_bytes
+from pyside_app.models.duplicate_tables import DuplicateFilesModel, DuplicateGroupsModel
 from review_state import save_decision, save_decisions_bulk
 from undo_service import UndoStack
 
@@ -46,18 +47,21 @@ class DuplicateRemovalView(QWidget):
         self.current_rows = []
         self.loaded_group_ids = []
         self.undo_stack = UndoStack(maxlen=400)
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Group", "Match", "Files", "Largest", "Recoverable", "First file"])
+        self.group_model = DuplicateGroupsModel(self)
+        self.file_model = DuplicateFilesModel(self)
+        self.table = QTableView()
+        self.table.setModel(self.group_model)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.itemSelectionChanged.connect(self.load_selected_group)
+        self.table.selectionModel().selectionChanged.connect(self.load_selected_group)
 
-        self.files = QTableWidget(0, 7)
-        self.files.setHorizontalHeaderLabels(["State", "Name", "Extension", "Size", "Folder", "Path", "ID"])
+        self.files = QTableView()
+        self.files.setModel(self.file_model)
         self.files.horizontalHeader().setStretchLastSection(True)
-        self.files.setSelectionBehavior(QTableWidget.SelectRows)
-        self.files.setColumnHidden(6, True)
+        self.files.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.files.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.files.hideColumn(6)
 
         keep = QPushButton("Keep")
         trash = QPushButton("Trash")
@@ -152,7 +156,8 @@ class DuplicateRemovalView(QWidget):
         db_path = self.db_path_getter()
         if not os.path.exists(db_path):
             self.summary.setText("Database not found")
-            self.table.setRowCount(0)
+            self.group_model.set_groups([])
+            self.file_model.set_files([])
             return
         with open_conn(db_path) as conn:
             group_ids = duplicate_group_ids(
@@ -162,8 +167,8 @@ class DuplicateRemovalView(QWidget):
                 search_text=self.search.text().strip(),
                 group_sort=self.sort.currentText(),
             )
-            self.table.setRowCount(0)
-            self.files.setRowCount(0)
+            group_rows = []
+            self.file_model.set_files([])
             self.current_group_id = None
             self.current_rows = []
             self.loaded_group_ids = group_ids[:500]
@@ -176,69 +181,36 @@ class DuplicateRemovalView(QWidget):
                 sizes = [row["tamano"] or 0 for row in rows]
                 largest = max(sizes)
                 recoverable = sum(sizes) - largest
-                index = self.table.rowCount()
-                self.table.insertRow(index)
-                values = [
-                    str(group_id),
+                group_rows.append([
+                    group_id,
                     str(rows[0].get("tipo_match") or ""),
-                    str(len(rows)),
+                    len(rows),
                     format_bytes(largest),
                     format_bytes(recoverable),
                     rows[0].get("ruta") or "",
-                ]
-                for column, value in enumerate(values):
-                    item = QTableWidgetItem(value)
-                    item.setFlags(item.flags() ^ Qt.ItemIsEditable)
-                    self.table.setItem(index, column, item)
+                ])
+            self.group_model.set_groups(group_rows)
             suffix = " Showing first 500." if len(group_ids) > 500 else ""
             self.summary.setText(f"{len(group_ids):,} groups, {total_files:,} files loaded.{suffix}")
 
-    def load_selected_group(self):
+    def load_selected_group(self, *_args):
         selected = self.table.selectionModel().selectedRows()
         if not selected:
             return
-        item = self.table.item(selected[0].row(), 0)
-        if not item:
+        group_id = self.group_model.group_id_at(selected[0].row())
+        if group_id is None:
             return
-        self.current_group_id = int(item.text())
+        self.current_group_id = group_id
         with open_conn(self.db_path_getter()) as conn:
             self.current_rows = duplicate_group_rows(conn, self.current_group_id, "hash")
         self.render_files()
 
     def render_files(self):
-        self.files.setRowCount(0)
-        for row in self.current_rows:
-            index = self.files.rowCount()
-            self.files.insertRow(index)
-            decision = row.get("decision") or ""
-            values = [
-                decision_label(decision),
-                row.get("nombre") or "",
-                row.get("extension") or "",
-                format_bytes(row.get("tamano")),
-                row.get("carpeta") or "",
-                row.get("ruta") or "",
-                str(row.get("id")),
-            ]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setFlags(item.flags() ^ Qt.ItemIsEditable)
-                if column == 0:
-                    item.setBackground(decision_color(decision))
-                    item.setForeground(Qt.white)
-                self.files.setItem(index, column, item)
+        self.file_model.set_files(self.current_rows)
 
     def selected_file_rows(self):
         selected = self.files.selectionModel().selectedRows()
-        rows = []
-        for model_index in selected:
-            id_item = self.files.item(model_index.row(), 6)
-            if id_item:
-                file_id = int(id_item.text())
-                row = next((r for r in self.current_rows if r["id"] == file_id), None)
-                if row:
-                    rows.append(row)
-        return rows
+        return self.file_model.file_rows_at(model_index.row() for model_index in selected)
 
     def selected_playback_path(self):
         rows = self.selected_file_rows()

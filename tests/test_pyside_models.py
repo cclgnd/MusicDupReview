@@ -2,11 +2,13 @@ import unittest
 
 try:
     from PySide6.QtCore import Qt
+    from pyside_app.models.file_explorer import FileExplorerModel
     from pyside_app.models.duplicate_tables import DuplicateFilesModel, DuplicateGroupsModel
 except ModuleNotFoundError:
     Qt = None
     DuplicateFilesModel = None
     DuplicateGroupsModel = None
+    FileExplorerModel = None
 
 
 @unittest.skipIf(DuplicateGroupsModel is None, "PySide6 is not installed")
@@ -36,6 +38,22 @@ class PySideModelTests(unittest.TestCase):
         self.assertEqual(model.data(model.index(0, 0), Qt.DisplayRole), "Trash")
         self.assertEqual(model.data(model.index(0, 3), Qt.DisplayRole), "2.00 KB")
         self.assertEqual(model.file_rows_at([0]), [row])
+
+    def test_file_explorer_model_formats_hash_link_rows(self):
+        model = FileExplorerModel()
+        model.set_files([{
+            "nombre": "b.flac",
+            "extension": ".flac",
+            "tamano": 1024,
+            "carpeta": r"C:\music",
+            "decision": "master",
+            "hash_link": "same as previous",
+        }])
+
+        self.assertEqual(model.data(model.index(0, 0), Qt.DisplayRole), "b.flac")
+        self.assertEqual(model.data(model.index(0, 2), Qt.DisplayRole), "1.00 KB")
+        self.assertEqual(model.data(model.index(0, 4), Qt.DisplayRole), "Keep")
+        self.assertEqual(model.data(model.index(0, 5), Qt.DisplayRole), "same as previous")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,9 @@
 import os
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QPushButton, QTableView, QVBoxLayout, QWidget
 
 from pyside_app.db import open_conn
-from pyside_app.formatting import decision_label, format_bytes
+from pyside_app.models.file_explorer import FileExplorerModel
 
 
 def file_explorer_order(contiguous_hash_mode):
@@ -23,8 +21,9 @@ class FileExplorerView(QWidget):
         self.contiguous_hash = QCheckBox("Contiguous identical hashes")
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Name", "Extension", "Size", "Folder", "Status", "Hash link"])
+        self.model = FileExplorerModel(self)
+        self.table = QTableView()
+        self.table.setModel(self.model)
         self.table.horizontalHeader().setStretchLastSection(True)
 
         top = QHBoxLayout()
@@ -39,7 +38,7 @@ class FileExplorerView(QWidget):
 
     def refresh(self):
         db_path = self.db_path_getter()
-        self.table.setRowCount(0)
+        self.model.set_files([])
         if not os.path.exists(db_path):
             return
         term = f"%{self.search.text().strip()}%"
@@ -65,24 +64,12 @@ class FileExplorerView(QWidget):
                     LIMIT 500
                 """)
             previous_hash = None
+            rows = []
             for row in cursor.fetchall():
-                index = self.table.rowCount()
-                self.table.insertRow(index)
                 current_hash = row["audio_md5"] or row["md5"] or ""
                 hash_link = "same as previous" if current_hash and current_hash == previous_hash else ""
-                values = [
-                    row["nombre"],
-                    row["extension"],
-                    format_bytes(row["tamano"]),
-                    row["carpeta"],
-                    decision_label(row["decision"]),
-                    hash_link,
-                ]
-                for column, value in enumerate(values):
-                    item = QTableWidgetItem(str(value or ""))
-                    item.setFlags(item.flags() ^ Qt.ItemIsEditable)
-                    if hash_link:
-                        item.setBackground(QColor("#1e3a8a"))
-                        item.setForeground(Qt.white)
-                    self.table.setItem(index, column, item)
+                row_data = dict(row)
+                row_data["hash_link"] = hash_link
+                rows.append(row_data)
                 previous_hash = current_hash
+            self.model.set_files(rows)

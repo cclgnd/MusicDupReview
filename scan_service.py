@@ -8,7 +8,7 @@ from duplicate_detection import detect_duplicates
 from media_utils import IMAGE_EXTS, audio_md5_file, category_for_extension, image_fingerprint, md5_file
 
 
-def scan_folder_to_database(db_path, root_path, progress_callback=None):
+def scan_folder_to_database(db_path, root_path, progress_callback=None, should_cancel=None):
     root = Path(root_path)
     if not root.is_dir():
         raise ValueError(f"Folder not found: {root_path}")
@@ -25,6 +25,7 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None):
         "duplicate_groups": 0,
         "duplicate_files": 0,
         "elapsed_seconds": 0.0,
+        "cancelled": False,
     }
 
     conn = sqlite3.connect(db_path)
@@ -33,6 +34,9 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None):
         ensure_schema(conn)
         cursor = conn.cursor()
         for path in iter_files(root):
+            if should_cancel and should_cancel():
+                stats["cancelled"] = True
+                break
             stats["discovered"] += 1
             if progress_callback and stats["discovered"] % 100 == 0:
                 progress_callback(dict(stats))
@@ -47,13 +51,20 @@ def scan_folder_to_database(db_path, root_path, progress_callback=None):
                 conn.commit()
 
         conn.commit()
-        groups, duplicate_files = detect_duplicates(conn)
-        stats["duplicate_groups"] = groups
-        stats["duplicate_files"] = duplicate_files
+        if not stats["cancelled"]:
+            groups, duplicate_files = detect_duplicates(conn)
+            stats["duplicate_groups"] = groups
+            stats["duplicate_files"] = duplicate_files
         stats["elapsed_seconds"] = time.time() - started
         cursor.execute(
             "INSERT INTO escaneos (inicio, fin, total_archivos, total_duplicados, notas) VALUES (?,?,?,?,?)",
-            (started, time.time(), stats["discovered"], duplicate_files, f"root={root};audio_md5=1"),
+            (
+                started,
+                time.time(),
+                stats["discovered"],
+                stats["duplicate_files"],
+                f"root={root};audio_md5=1;cancelled={int(stats['cancelled'])}",
+            ),
         )
         conn.commit()
         return stats

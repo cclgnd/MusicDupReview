@@ -43,6 +43,38 @@ class ScanServiceTests(unittest.TestCase):
             finally:
                 os.unlink(db_path)
 
+    def test_scan_folder_can_cancel_with_partial_results(self):
+        with tempfile.TemporaryDirectory() as root:
+            db = tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite")
+            db_path = db.name
+            db.close()
+            try:
+                root_path = Path(root)
+                for index in range(5):
+                    (root_path / f"{index}.txt").write_bytes(f"content-{index}".encode("ascii"))
+
+                calls = {"count": 0}
+
+                def should_cancel():
+                    calls["count"] += 1
+                    return calls["count"] > 3
+
+                stats = scan_folder_to_database(db_path, root, should_cancel=should_cancel)
+
+                self.assertTrue(stats["cancelled"])
+                self.assertEqual(stats["discovered"], 3)
+                self.assertEqual(stats["duplicate_groups"], 0)
+                conn = sqlite3.connect(db_path)
+                try:
+                    total = conn.execute("SELECT COUNT(*) FROM archivos").fetchone()[0]
+                    notes = conn.execute("SELECT notas FROM escaneos").fetchone()[0]
+                finally:
+                    conn.close()
+                self.assertEqual(total, 3)
+                self.assertIn("cancelled=1", notes)
+            finally:
+                os.unlink(db_path)
+
 
 if __name__ == "__main__":
     unittest.main()

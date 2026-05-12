@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QFileDialog, QLabel, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QListWidget, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from database_maintenance import verify_database_files
 from scan_service import scan_folder_to_database
@@ -32,10 +32,21 @@ class FolderScanWorker(QThread):
         super().__init__()
         self.db_path = db_path
         self.folder = folder
+        self.cancel_requested = False
+
+    def cancel(self):
+        self.cancel_requested = True
 
     def run(self):
         try:
-            self.finished_ok.emit(scan_folder_to_database(self.db_path, self.folder, self.progress.emit))
+            self.finished_ok.emit(
+                scan_folder_to_database(
+                    self.db_path,
+                    self.folder,
+                    self.progress.emit,
+                    should_cancel=lambda: self.cancel_requested,
+                )
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -51,6 +62,9 @@ class UtilitiesView(QWidget):
         self.backups = QListWidget()
         self.scan_button = QPushButton("Scan Folder...")
         self.scan_button.clicked.connect(self.scan_folder)
+        self.cancel_scan_button = QPushButton("Cancel Scan")
+        self.cancel_scan_button.setEnabled(False)
+        self.cancel_scan_button.clicked.connect(self.cancel_scan)
         check = QPushButton("Check Files Now")
         check.clicked.connect(self.check_files)
         backup = QPushButton("Backup Current Database")
@@ -58,8 +72,12 @@ class UtilitiesView(QWidget):
         refresh_backups = QPushButton("Refresh Backup List")
         refresh_backups.clicked.connect(self.refresh_backups)
 
+        scan_actions = QHBoxLayout()
+        scan_actions.addWidget(self.scan_button)
+        scan_actions.addWidget(self.cancel_scan_button)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(self.scan_button)
+        layout.addLayout(scan_actions)
         layout.addWidget(check)
         layout.addWidget(backup)
         layout.addWidget(refresh_backups)
@@ -79,11 +97,18 @@ class UtilitiesView(QWidget):
         db_path = self.db_path_getter()
         self.status.setText(f"Scanning folder in background: {folder}")
         self.scan_button.setEnabled(False)
+        self.cancel_scan_button.setEnabled(True)
         self.scan_worker = FolderScanWorker(db_path, folder)
         self.scan_worker.progress.connect(self._scan_progress)
         self.scan_worker.finished_ok.connect(self._scan_finished)
         self.scan_worker.failed.connect(self._scan_failed)
         self.scan_worker.start()
+
+    def cancel_scan(self):
+        if self.scan_worker and self.scan_worker.isRunning():
+            self.scan_worker.cancel()
+            self.cancel_scan_button.setEnabled(False)
+            self.status.setText("Cancelling scan after current file...")
 
     def _scan_progress(self, stats):
         self.status.setText(
@@ -92,16 +117,19 @@ class UtilitiesView(QWidget):
 
     def _scan_finished(self, stats):
         self.scan_button.setEnabled(True)
+        self.cancel_scan_button.setEnabled(False)
+        title = "Scan cancelled" if stats.get("cancelled") else "Scan complete"
         self.status.setText(
-            f"Scan complete: {stats['duplicate_groups']:,} duplicate groups, {stats['duplicate_files']:,} duplicate files"
+            f"{title}: {stats['duplicate_groups']:,} duplicate groups, {stats['duplicate_files']:,} duplicate files"
         )
         if self.database_changed:
             self.database_changed()
         QMessageBox.information(
             self,
-            "Scan complete",
+            title,
             "\n".join([
                 f"Folder: {stats['root']}",
+                f"Status: {title}",
                 f"Files found: {stats['discovered']:,}",
                 f"New files: {stats['new']:,}",
                 f"Updated files: {stats['updated']:,}",
@@ -115,6 +143,7 @@ class UtilitiesView(QWidget):
 
     def _scan_failed(self, message):
         self.scan_button.setEnabled(True)
+        self.cancel_scan_button.setEnabled(False)
         self.status.setText("Scan failed")
         QMessageBox.critical(self, "Scan folder", message)
 

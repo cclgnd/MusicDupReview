@@ -33,6 +33,7 @@ report_*.csv
 
 # Local backups and prototypes
 backups/
+artifacts/
 html gui PREVIEWS PROTO/
 
 # One-off local diagnostics with machine-specific media paths

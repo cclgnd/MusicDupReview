@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible defect or crash.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: State the broken behavior and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List exact actions, filters, database state, and UI view.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: File-safety impact
+      description: State whether files could be moved, recycled, marked incorrectly, or lost.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add traceback, screenshots, logs, or test output.
+    validations:
+      required: false

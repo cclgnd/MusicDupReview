@@ -1,0 +1,33 @@
+name: Safety review
+description: Review risky file, database, or automation behavior.
+title: "[Safety]: "
+labels: ["safety", "review"]
+body:
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Identify the command, UI flow, or module under review.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks to evaluate
+      description: Include data loss, wrong duplicate grouping, database corruption, path handling, and undo limits.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_controls
+    attributes:
+      label: Expected controls
+      description: Confirm recycle-bin only, explicit prompts, idempotent database updates, and test coverage.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Define whether this should produce a report, tests, code changes, or a pull request.
+    validations:
+      required: true

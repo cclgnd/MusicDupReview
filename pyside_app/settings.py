@@ -29,4 +29,24 @@ def initial_database_path(cli_path=None, settings_path=SETTINGS_PATH):
     if cli_path:
         return cli_path
     settings = load_app_settings(settings_path)
-    return settings.get("db_path") or DEFAULT_DB
+    saved_value = settings.get("db_path") or ""
+    saved_path = Path(saved_value) if saved_value else None
+    if saved_value and Path(settings_path) != SETTINGS_PATH:
+        return saved_value
+    if saved_path and saved_path.exists():
+        return str(saved_path)
+    latest_path = latest_database_path(settings_path)
+    if latest_path:
+        return str(latest_path)
+    return DEFAULT_DB
+
+
+def latest_database_path(settings_path=SETTINGS_PATH):
+    candidates = []
+    root = APP_DIR if Path(settings_path) == SETTINGS_PATH else Path(settings_path).parent
+    search_dir = root / "search_databases"
+    if search_dir.exists():
+        candidates.extend(path for path in search_dir.glob("*.db") if path.is_file())
+    if Path(settings_path) != SETTINGS_PATH and root.exists():
+        candidates.extend(path for path in root.glob("*.db") if path.is_file())
+    return max(candidates, key=lambda path: path.stat().st_mtime, default=None)

@@ -15,6 +15,65 @@ def duplicate_extension_values(db_path):
         return db_duplicate_extensions(conn)
 
 
+def file_extension_values(db_path):
+    if not os.path.exists(db_path):
+        return []
+    with closing(open_conn(db_path)) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT COALESCE(extension, '') AS ext
+            FROM archivos
+            WHERE COALESCE(extension, '') <> ''
+            ORDER BY ext
+        """)
+        return [row[0] for row in cursor.fetchall()]
+
+
+def all_file_rows(db_path, extension_filter="ALL", search_text="", sort_value="name", limit=500):
+    if not os.path.exists(db_path):
+        return []
+
+    where = []
+    params = []
+    if extension_filter != "ALL":
+        where.append("a.extension = ?")
+        params.append(extension_filter)
+    if search_text.strip():
+        where.append("a.ruta LIKE ?")
+        params.append(f"%{search_text.strip()}%")
+
+    order = {
+        "biggest file": "a.tamano DESC, lower(a.nombre), a.id",
+        "smallest file": "a.tamano ASC, lower(a.nombre), a.id",
+        "name": "lower(a.nombre), a.id",
+        "name desc": "lower(a.nombre) DESC, a.id",
+        "date": "a.fecha_mod DESC, lower(a.nombre), a.id",
+        "same_file_hash": "COALESCE(a.md5, ''), lower(a.nombre), a.id",
+        "same_audio_hash": "COALESCE(a.audio_md5, ''), lower(a.nombre), a.id",
+    }.get(sort_value, "lower(a.nombre), a.id")
+
+    sql = """
+        SELECT a.id, a.ruta, a.nombre, a.carpeta, a.extension, a.categoria,
+               a.tamano, a.md5, a.audio_md5, a.fecha_mod,
+               m.bitrate, m.duracion,
+               NULL AS grupo_id,
+               'all' AS tipo_match,
+               NULL AS score,
+               COALESCE(de.decision,'') AS decision
+        FROM archivos a
+        LEFT JOIN metadata m ON m.archivo_id = a.id
+        LEFT JOIN decisiones de ON de.archivo_id = a.id
+    """
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += f" ORDER BY {order} LIMIT {max(0, int(limit))}"
+
+    with closing(open_conn(db_path)) as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def duplicate_group_summaries(
     db_path,
     match_filter="all",

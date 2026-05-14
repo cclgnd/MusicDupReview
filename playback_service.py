@@ -43,6 +43,21 @@ class PlaybackService:
             return
         pygame.mixer.music.play(start=seconds)
 
+    def pause(self):
+        if not AUDIO_AVAILABLE:
+            return
+        pygame.mixer.music.pause()
+
+    def resume(self):
+        if not AUDIO_AVAILABLE:
+            return
+        pygame.mixer.music.unpause()
+
+    def stop(self):
+        if not AUDIO_AVAILABLE:
+            return
+        pygame.mixer.music.stop()
+
     def position_seconds(self):
         if not AUDIO_AVAILABLE:
             return -1.0

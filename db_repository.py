@@ -132,8 +132,12 @@ def duplicate_group_ids(conn, match_filter="all", extension_filter="ALL", search
     sql += " GROUP BY d.grupo_id"
     if group_sort == "biggest file":
         sql += " ORDER BY max_size DESC, d.grupo_id"
+    elif group_sort == "smallest file":
+        sql += " ORDER BY max_size ASC, d.grupo_id"
     elif group_sort == "name":
         sql += " ORDER BY group_name, d.grupo_id"
+    elif group_sort == "name desc":
+        sql += " ORDER BY group_name DESC, d.grupo_id"
     elif group_sort == "date":
         sql += " ORDER BY newest DESC, d.grupo_id"
     else:
@@ -285,6 +289,42 @@ def create_folder_clone_group(conn, file_ids):
 
 
 def row_order_clause(row_sort):
+    if row_sort == "same_file_hash":
+        return """
+        ORDER BY
+            CASE
+                WHEN COALESCE(a.md5, '') = '' THEN 2
+                WHEN (
+                    SELECT COUNT(*)
+                    FROM duplicados d2
+                    JOIN archivos a2 ON a2.id = d2.archivo_id
+                    WHERE d2.grupo_id = d.grupo_id
+                      AND COALESCE(a2.md5, '') = COALESCE(a.md5, '')
+                ) > 1 THEN 0
+                ELSE 1
+            END,
+            COALESCE(a.md5, ''),
+            a.tamano DESC,
+            a.ruta
+        """
+    if row_sort == "same_audio_hash":
+        return """
+        ORDER BY
+            CASE
+                WHEN COALESCE(a.audio_md5, '') = '' THEN 2
+                WHEN (
+                    SELECT COUNT(*)
+                    FROM duplicados d2
+                    JOIN archivos a2 ON a2.id = d2.archivo_id
+                    WHERE d2.grupo_id = d.grupo_id
+                      AND COALESCE(a2.audio_md5, '') = COALESCE(a.audio_md5, '')
+                ) > 1 THEN 0
+                ELSE 1
+            END,
+            COALESCE(a.audio_md5, ''),
+            a.tamano DESC,
+            a.ruta
+        """
     if row_sort == "biggest file":
         return " ORDER BY a.tamano DESC, a.ruta"
     if row_sort == "smallest file":

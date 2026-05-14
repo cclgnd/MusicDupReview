@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from database_maintenance import database_integrity_report, verify_database_files
+from pyside_app.config import APP_DIR
 from pyside_app.settings import load_app_settings, save_app_settings
 from scan_service import scan_folder_to_database, scan_history_rows, scan_summary_lines
 
@@ -65,16 +66,20 @@ class FolderScanWorker(QThread):
 
 
 class UtilitiesView(QWidget):
-    def __init__(self, db_path_getter, database_changed=None):
+    def __init__(self, db_path_getter, database_changed=None, database_setter=None):
         super().__init__()
         self.db_path_getter = db_path_getter
         self.database_changed = database_changed
+        self.database_setter = database_setter
         self.settings = load_app_settings()
         self.worker = None
         self.scan_worker = None
         self.status = QLabel("Ready")
         self.scan_detail = QLabel("")
         self.scan_detail.setWordWrap(True)
+        self.scan_live = QTextEdit()
+        self.scan_live.setReadOnly(True)
+        self.scan_live.setMaximumHeight(140)
         self.scan_progress = QProgressBar()
         self.scan_progress.setVisible(False)
         self.backups = QListWidget()
@@ -110,6 +115,7 @@ class UtilitiesView(QWidget):
         layout.addWidget(refresh_backups)
         layout.addWidget(self.scan_progress)
         layout.addWidget(self.scan_detail)
+        layout.addWidget(self.scan_live)
         layout.addWidget(QLabel("Recent Scans"))
         layout.addWidget(self.scan_history, 1)
         layout.addWidget(QLabel("Backups"))
@@ -134,14 +140,20 @@ class UtilitiesView(QWidget):
             return
         self.settings["last_scan_folder"] = folder
         save_app_settings(self.settings)
-        db_path = self.db_path_getter()
-        self.status.setText(f"Scanning folder in background: {folder}")
+        previous_db_path = self.db_path_getter()
+        db_path = self.new_search_database_path(folder)
+        self.status.setText(f"Scanning folder into new database: {db_path}")
         self.scan_detail.setText(folder)
+        self.scan_live.setPlainText(
+            f"Starting scan...\nNew database: {db_path}\nPrevious database: {previous_db_path}\nUI stays usable. Playback remains available."
+        )
         self.scan_progress.setRange(0, 0)
         self.scan_progress.setVisible(True)
         self.scan_button.setEnabled(False)
         self.cancel_scan_button.setEnabled(True)
         self.scan_worker = FolderScanWorker(db_path, folder)
+        self.scan_worker.previous_db_path = previous_db_path
+        self.scan_worker.target_db_path = db_path
         self.scan_worker.progress.connect(self._scan_progress)
         self.scan_worker.finished_ok.connect(self._scan_finished)
         self.scan_worker.failed.connect(self._scan_failed)
@@ -154,11 +166,24 @@ class UtilitiesView(QWidget):
             self.status.setText("Cancelling scan after current file...")
 
     def _scan_progress(self, stats):
+        phase = stats.get("phase", "scan")
         self.status.setText(
-            f"Scanning... {stats['discovered']:,} files seen, {stats['files_per_second']:.1f}/s, {stats['new']:,} new"
+            f"{phase.title()}... {stats['discovered']:,} seen, {stats['hashed']:,} hashed, {stats['files_per_second']:.1f}/s"
         )
         current = stats.get("current_path") or stats.get("current_folder") or stats.get("root") or ""
-        self.scan_detail.setText(current)
+        self.scan_detail.setText(f"{phase}: {current}")
+        lines = [
+            f"Phase: {phase}",
+            f"Folder: {stats.get('root', '')}",
+            f"Current: {current}",
+            f"Files seen: {stats['discovered']:,}",
+            f"New: {stats['new']:,}   Updated: {stats['updated']:,}   Unchanged: {stats['unchanged']:,}",
+            f"Hashed: {stats['hashed']:,}   Errors: {stats['errors']:,}",
+            f"Duplicate groups: {stats.get('duplicate_groups', 0):,}   Duplicate files: {stats.get('duplicate_files', 0):,}",
+            f"Elapsed: {stats.get('elapsed_seconds', 0.0):.1f}s   Rate: {stats.get('files_per_second', 0.0):.1f}/s",
+        ]
+        self.scan_live.setPlainText("\n".join(lines))
+        self.scan_live.verticalScrollBar().setValue(self.scan_live.verticalScrollBar().maximum())
 
     def _scan_finished(self, stats):
         self.scan_button.setEnabled(True)
@@ -171,15 +196,43 @@ class UtilitiesView(QWidget):
         self.scan_detail.setText(
             f"{stats['discovered']:,} files processed from {stats['root']}"
         )
-        if self.database_changed:
+        self.scan_live.setPlainText("\n".join(scan_summary_lines(stats)))
+        target_db_path = getattr(self.scan_worker, "target_db_path", "")
+        previous_db_path = getattr(self.scan_worker, "previous_db_path", "")
+        if previous_db_path:
+            self.vacuum_database(previous_db_path)
+        if target_db_path:
+            self.settings = load_app_settings()
+            self.settings["db_path"] = target_db_path
+            save_app_settings(self.settings)
+            if self.database_setter:
+                self.database_setter(target_db_path)
+        if self.database_changed and not self.database_setter:
             self.database_changed()
         self.refresh_scan_history()
         self.refresh_integrity_report()
-        QMessageBox.information(
-            self,
-            title,
-            "\n".join(scan_summary_lines(stats)),
-        )
+
+    def new_search_database_path(self, folder):
+        root = Path(folder)
+        safe_name = "".join(char if char.isalnum() else "_" for char in root.name).strip("_") or "search"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        db_dir = APP_DIR / "search_databases"
+        db_dir.mkdir(exist_ok=True)
+        return str(db_dir / f"{safe_name}_{stamp}.db")
+
+    def vacuum_database(self, db_path):
+        path = Path(db_path)
+        if not path.exists():
+            return
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(path))
+            try:
+                conn.execute("VACUUM")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return
 
     def _scan_failed(self, message):
         self.scan_button.setEnabled(True)
@@ -187,6 +240,7 @@ class UtilitiesView(QWidget):
         self.scan_progress.setVisible(False)
         self.status.setText("Scan failed")
         self.scan_detail.setText("")
+        self.scan_live.setPlainText(message)
         QMessageBox.critical(self, "Scan folder", message)
 
     def open_last_scan_folder(self):
